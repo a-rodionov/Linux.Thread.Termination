@@ -8,11 +8,12 @@
 #include <unistd.h>
 #include <cxxabi.h>
 
-std::mutex m;
-std::condition_variable cv;
+std::mutex m, m2;
+std::condition_variable cv, cv2;
 bool ready = false;
 bool continue_not_interruptible = false;
 bool is_not_interruptible_continued = false;
+const static int sleep_period_sec = 5;
 
 class Object
 {
@@ -31,11 +32,51 @@ private:
 
 static Object staticObject("Static Object");
 
-void ThreadFunction1_SecondStackFrame()
+void* ThreadFunction1(void*)
+{
+  bool isTimeout = false;
+  try
+  {
+    ready = true;
+    cv.notify_one();
+
+    {
+      std::unique_lock<std::mutex> lk(m2);
+      isTimeout = !cv2.wait_for(lk, std::chrono::seconds(sleep_period_sec), [] { return false; });
+    }
+  }
+  catch (abi::__forced_unwind&)
+  {
+    if(isTimeout)
+    {
+      std::cout << "ThreadFunction1. condition_variable.wait_for wasn't interrupted by pthread_cancel." << std::endl;
+    }
+    else
+    {
+      std::cout << "ThreadFunction1. condition_variable.wait_for was interrupted by pthread_cancel." << std::endl;
+    }
+    throw;
+  }
+  catch(...)
+  {}
+
+  if(isTimeout)
+  {
+    std::cout << "ThreadFunction1. condition_variable.wait_for wasn't interrupted by pthread_cancel." << std::endl;
+  }
+  else
+  {
+    std::cout << "ThreadFunction1. condition_variable.wait_for was interrupted by pthread_cancel." << std::endl;
+  }
+  
+  return nullptr;
+}
+
+void ThreadFunction2_SecondStackFrame()
 {
   try
   {
-    Object localObject("Local Object. Thread 1. Second stack frame");
+    Object localObject("Local Object. Thread 2. Second stack frame");
 
     ready = true;
     cv.notify_one();
@@ -50,12 +91,12 @@ void ThreadFunction1_SecondStackFrame()
   }
 }
 
-void* ThreadFunction1(void*)
+void* ThreadFunction2(void*)
 {
   try
   {
-    Object localObject("Local Object. Thread 1. First stack frame");
-    ThreadFunction1_SecondStackFrame();    
+    Object localObject("Local Object. Thread 2. First stack frame");
+    ThreadFunction2_SecondStackFrame();    
   }
   // NPTL generates exception of type abi::__forced_unwind for the thread for
   // which pthread_cancel was called. If this exception is caught and not rethrown,
@@ -69,9 +110,9 @@ void* ThreadFunction1(void*)
   return nullptr;
 }
 
-void ThreadFunction2_NotInterruptible()
+void ThreadFunction3_NotInterruptible()
 {
-  Object localObject("Local Object. Thread 2. Second stack frame");
+  Object localObject("Local Object. Thread 3. Second stack frame");
 
   auto errCode = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
   if(errCode)
@@ -103,16 +144,16 @@ void ThreadFunction2_NotInterruptible()
   }
 }
 
-void* ThreadFunction2(void*)
+void* ThreadFunction3(void*)
 {
-  Object localObject("Local Object. Thread 2. First stack frame");
-  ThreadFunction2_NotInterruptible();
+  Object localObject("Local Object. Thread 3. First stack frame");
+  ThreadFunction3_NotInterruptible();
   return nullptr;
 }
 
 int main()
 {
-  std::vector<pthread_t> threads(2);
+  std::vector<pthread_t> threads(3);
   void* result;
 
   ready = false;
@@ -124,6 +165,13 @@ int main()
 
   ready = false;
   pthread_create(&threads[1], NULL, &ThreadFunction2, NULL);
+  {
+    std::unique_lock<std::mutex> lk(m);
+    cv.wait(lk, [] { return ready; });
+  }
+
+  ready = false;
+  pthread_create(&threads[2], NULL, &ThreadFunction3, NULL);
   {
     std::unique_lock<std::mutex> lk(m);
     cv.wait(lk, [] { return ready; });
