@@ -9,6 +9,7 @@
 #include <cxxabi.h>
 
 std::mutex m, m2;
+std::timed_mutex socket_mutex;
 std::condition_variable cv, cv2;
 bool ready = false;
 bool continue_not_interruptible = false;
@@ -37,13 +38,12 @@ void* ThreadFunction1(void*)
   bool isTimeout = false;
   try
   {
+    std::unique_lock<std::mutex> lk(m2);
+
     ready = true;
     cv.notify_one();
 
-    {
-      std::unique_lock<std::mutex> lk(m2);
-      isTimeout = !cv2.wait_for(lk, std::chrono::seconds(sleep_period_sec), [] { return false; });
-    }
+    isTimeout = !cv2.wait_for(lk, std::chrono::seconds(sleep_period_sec), [] { return false; });
   }
   catch (abi::__forced_unwind&)
   {
@@ -68,15 +68,56 @@ void* ThreadFunction1(void*)
   {
     std::cout << "ThreadFunction1. condition_variable.wait_for was interrupted by pthread_cancel." << std::endl;
   }
-  
+
   return nullptr;
 }
 
-void ThreadFunction2_SecondStackFrame()
+// ThreadFunction2 will be waiting for socket_mutex which is locked by main thread.
+void* ThreadFunction2(void*)
+{
+  bool isTimeout = false;
+  try
+  {
+    ready = true;
+    cv.notify_one();
+
+    isTimeout = !socket_mutex.try_lock_for(std::chrono::seconds(sleep_period_sec));
+    if (!isTimeout)
+    {
+      socket_mutex.unlock();
+    }
+  }
+  catch (abi::__forced_unwind&)
+  {
+    if(isTimeout)
+    {
+      std::cout << "ThreadFunction2. timed_mutex.try_lock_for with locked mutex wasn't canceled by pthread_cancel." << std::endl;
+    }
+    else
+    {
+      std::cout << "ThreadFunction2. timed_mutex.try_lock_for with locked mutex was canceled by pthread_cancel." << std::endl;
+    }
+    throw;
+  }
+  catch(...)
+  {}
+
+  if(isTimeout)
+  {
+    std::cout << "ThreadFunction2. timed_mutex.try_lock_for with locked mutex wasn't canceled by pthread_cancel." << std::endl;
+  }
+  else
+  {
+    std::cout << "ThreadFunction2. timed_mutex.try_lock_for with locked mutex was canceled by pthread_cancel." << std::endl;
+  }
+  return nullptr;
+}
+
+void ThreadFunction3_SecondStackFrame()
 {
   try
   {
-    Object localObject("Local Object. Thread 2. Second stack frame");
+    Object localObject("Local Object. Thread 3. Second stack frame");
 
     ready = true;
     cv.notify_one();
@@ -91,12 +132,12 @@ void ThreadFunction2_SecondStackFrame()
   }
 }
 
-void* ThreadFunction2(void*)
+void* ThreadFunction3(void*)
 {
   try
   {
-    Object localObject("Local Object. Thread 2. First stack frame");
-    ThreadFunction2_SecondStackFrame();    
+    Object localObject("Local Object. Thread 3. First stack frame");
+    ThreadFunction3_SecondStackFrame();    
   }
   // NPTL generates exception of type abi::__forced_unwind for the thread for
   // which pthread_cancel was called. If this exception is caught and not rethrown,
@@ -110,9 +151,9 @@ void* ThreadFunction2(void*)
   return nullptr;
 }
 
-void ThreadFunction3_NotInterruptible()
+void ThreadFunction4_NotInterruptible()
 {
-  Object localObject("Local Object. Thread 3. Second stack frame");
+  Object localObject("Local Object. Thread 4. Second stack frame");
 
   auto errCode = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
   if(errCode)
@@ -144,16 +185,16 @@ void ThreadFunction3_NotInterruptible()
   }
 }
 
-void* ThreadFunction3(void*)
+void* ThreadFunction4(void*)
 {
-  Object localObject("Local Object. Thread 3. First stack frame");
-  ThreadFunction3_NotInterruptible();
+  Object localObject("Local Object. Thread 4. First stack frame");
+  ThreadFunction4_NotInterruptible();
   return nullptr;
 }
 
 int main()
 {
-  std::vector<pthread_t> threads(3);
+  std::vector<pthread_t> threads(4);
   void* result;
 
   ready = false;
@@ -162,6 +203,8 @@ int main()
     std::unique_lock<std::mutex> lk(m);
     cv.wait(lk, [] { return ready; });
   }
+
+  socket_mutex.lock();
 
   ready = false;
   pthread_create(&threads[1], NULL, &ThreadFunction2, NULL);
@@ -172,6 +215,13 @@ int main()
 
   ready = false;
   pthread_create(&threads[2], NULL, &ThreadFunction3, NULL);
+  {
+    std::unique_lock<std::mutex> lk(m);
+    cv.wait(lk, [] { return ready; });
+  }
+
+  ready = false;
+  pthread_create(&threads[3], NULL, &ThreadFunction4, NULL);
   {
     std::unique_lock<std::mutex> lk(m);
     cv.wait(lk, [] { return ready; });
@@ -206,6 +256,8 @@ int main()
   {
     std::cout << "pthread_setcancelstate with PTHREAD_CANCEL_DISABLE failed to prevent termination of thread" << std::endl;
   }
+
+  socket_mutex.unlock();
 
   return 0;
 }
