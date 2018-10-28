@@ -8,15 +8,19 @@
 #include <signal.h>
 #include <unistd.h>
 #include <string.h>
+#include <atomic>
 
-std::mutex m;
-std::condition_variable cv;
+std::mutex m, m2;
+std::condition_variable cv, cv2;
 bool ready = false;
 bool processed = false;
+std::atomic_bool isSignaled( false );
 const static int sleep_period_sec = 5;
+const static int SIG_USR_INT = SIGRTMIN + 3;
 
 void signal_handler(int signo)
 { 
+  isSignaled = true;
   return; 
 }
 
@@ -29,17 +33,34 @@ void set_signal_handler(void)
   
   sigset_t set;
   sigemptyset(&set);
-  sigaddset(&set, SIGRTMIN + 3);
+  sigaddset(&set, SIG_USR_INT);
   action.sa_mask = set;
 
-  if (sigaction(SIGRTMIN + 3, &action, NULL) == -1)
+  if (sigaction(SIG_USR_INT, &action, NULL) == -1)
   {
     _exit(1);
   }
 }
 
+void mask_signal(void)
+{
+  sigset_t mask;
+  sigemptyset(&mask); 
+  sigaddset(&mask, SIG_USR_INT); 
+  pthread_sigmask(SIG_BLOCK, &mask, NULL);
+}
+
+void unmask_signal(void)
+{
+  sigset_t mask;
+  sigemptyset(&mask); 
+  sigaddset(&mask, SIG_USR_INT); 
+  pthread_sigmask(SIG_UNBLOCK, &mask, NULL);
+}
+
 void f_sleep()
 {
+  unmask_signal();
   ready = true;
   cv.notify_one();
     
@@ -51,6 +72,7 @@ void f_sleep()
 
 void f_usleep()
 {
+  unmask_signal();
   ready = true;
   cv.notify_one();
     
@@ -62,6 +84,7 @@ void f_usleep()
 
 void f_sleep_for()
 {
+  unmask_signal();
   ready = true;
   cv.notify_one();
     
@@ -71,10 +94,31 @@ void f_sleep_for()
   cv.notify_one();
 }
 
+void condition_variable_wait_for()
+{
+  unmask_signal();
+  ready = true;
+  cv.notify_one();
+
+  std::unique_lock<std::mutex> lk(m2);
+  if(cv2.wait_for(lk, std::chrono::seconds(sleep_period_sec), [] { return isSignaled.load(); }))
+  {
+    std::cout << "condition_variable_wait_for isSignaled is set" << std::endl;
+  }
+  else
+  {
+    std::cout << "condition_variable_wait_for timeout & isSignaled isn't set" << std::endl;
+  }
+    
+  processed = true;
+  cv.notify_one();
+}
+
 void run(void(*threadFunction)(), const std::string& functionName)
 {
   ready = false;
   processed = false;
+  isSignaled = false;
 
   std::thread thread_inst(threadFunction);
   {
@@ -83,7 +127,8 @@ void run(void(*threadFunction)(), const std::string& functionName)
   }
   auto start = std::chrono::system_clock::now();
 
-  pthread_kill(thread_inst.native_handle(), SIGRTMIN + 3);
+  std::this_thread::sleep_for(std::chrono::seconds(1));
+  pthread_kill(thread_inst.native_handle(), SIG_USR_INT);
 
   {
     std::unique_lock<std::mutex> lk(m);
@@ -104,8 +149,10 @@ int main()
 {
   const std::map<void(*)(), const std::string> functions {{&f_sleep, "sleep"},
                                                           {&f_usleep, "usleep"},
-                                                          {&f_sleep_for, "sleep_for"}};
+                                                          {&f_sleep_for, "sleep_for"},
+                                                          {&condition_variable_wait_for, "condition_variable.wait_for"}};
   set_signal_handler();
+  mask_signal();
   for(const auto& function : functions)
   {
     run(function.first, function.second);
