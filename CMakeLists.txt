@@ -14,6 +14,9 @@ target_link_libraries(pthread_cancel ${CMAKE_THREAD_LIBS_INIT})
 add_executable(mask_signal mask_signal.cpp)
 target_link_libraries(mask_signal ${CMAKE_THREAD_LIBS_INIT})
 
+add_executable(pthread_pause pthread_pause.cpp)
+target_link_libraries(pthread_pause ${CMAKE_THREAD_LIBS_INIT})
+
 # Настройка для всех целей
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
