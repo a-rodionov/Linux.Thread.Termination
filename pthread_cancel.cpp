@@ -7,6 +7,7 @@
 #include <vector>
 #include <unistd.h>
 #include <cxxabi.h>
+#include <pthread.h>
 
 std::mutex m, m2;
 std::timed_mutex socket_mutex;
@@ -38,6 +39,19 @@ void* ThreadFunction1(void*)
   bool isTimeout = false;
   try
   {
+    int errorCode = pthread_setcancelstate( PTHREAD_CANCEL_ENABLE, nullptr );
+    if( errorCode )
+    {
+      std::cerr << "Failed to set cancel state PTHREAD_CANCEL_ENABLE in worker thread." << std::endl;
+      return nullptr;
+    }
+    errorCode = pthread_setcanceltype( PTHREAD_CANCEL_ASYNCHRONOUS, nullptr );
+    if( errorCode )
+    {
+      std::cerr << "Failed to set cancel type PTHREAD_CANCEL_ASYNCHRONOUS in worker thread." << std::endl;
+      return nullptr;
+    }
+
     std::unique_lock<std::mutex> lk(m2);
 
     ready = true;
@@ -78,6 +92,19 @@ void* ThreadFunction2(void*)
   bool isTimeout = false;
   try
   {
+    int errorCode = pthread_setcancelstate( PTHREAD_CANCEL_ENABLE, nullptr );
+    if( errorCode )
+    {
+      std::cerr << "Failed to set cancel state PTHREAD_CANCEL_ENABLE in worker thread." << std::endl;
+      return nullptr;
+    }
+    errorCode = pthread_setcanceltype( PTHREAD_CANCEL_ASYNCHRONOUS, nullptr );
+    if( errorCode )
+    {
+      std::cerr << "Failed to set cancel type PTHREAD_CANCEL_ASYNCHRONOUS in worker thread." << std::endl;
+      return nullptr;
+    }
+
     ready = true;
     cv.notify_one();
 
@@ -119,11 +146,24 @@ void ThreadFunction3_SecondStackFrame()
   {
     Object localObject("Local Object. Thread 3. Second stack frame");
 
+    int errorCode = pthread_setcancelstate( PTHREAD_CANCEL_ENABLE, nullptr );
+    if( errorCode )
+    {
+      std::cerr << "Failed to set cancel state PTHREAD_CANCEL_ENABLE in worker thread." << std::endl;
+      return;
+    }
+    errorCode = pthread_setcanceltype( PTHREAD_CANCEL_ASYNCHRONOUS, nullptr );
+    if( errorCode )
+    {
+      std::cerr << "Failed to set cancel type PTHREAD_CANCEL_ASYNCHRONOUS in worker thread." << std::endl;
+      return;
+    }
+
     ready = true;
     cv.notify_one();
     while(true)
     {
-      sleep(1);
+      sleep(sleep_period_sec);
     }
   }
   catch(...)
@@ -155,10 +195,16 @@ void ThreadFunction4_NotInterruptible()
 {
   Object localObject("Local Object. Thread 4. Second stack frame");
 
-  auto errCode = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
-  if(errCode)
+  auto errorCode = pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, NULL);
+  if(errorCode)
   {
-    std::cerr << "pthread_setcancelstate with PTHREAD_CANCEL_DISABLE failed with error code = " << errCode << std::endl;
+    std::cerr << "pthread_setcancelstate with PTHREAD_CANCEL_DISABLE failed with error code = " << errorCode << std::endl;
+    return;
+  }
+  errorCode = pthread_setcanceltype( PTHREAD_CANCEL_ASYNCHRONOUS, nullptr );
+  if( errorCode )
+  {
+    std::cerr << "Failed to set cancel type PTHREAD_CANCEL_ASYNCHRONOUS in worker thread." << std::endl;
     return;
   }
 
@@ -172,16 +218,16 @@ void ThreadFunction4_NotInterruptible()
 
   is_not_interruptible_continued = true;
   
-  errCode = pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
-  if(errCode)
+  errorCode = pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, NULL);
+  if(errorCode)
   {
-    std::cerr << "pthread_setcancelstate with PTHREAD_CANCEL_ENABLE failed with error code = " << errCode << std::endl;
+    std::cerr << "pthread_setcancelstate with PTHREAD_CANCEL_ENABLE failed with error code = " << errorCode << std::endl;
     return;
   }
 
   while(true)
   {
-    sleep(1);
+    sleep(sleep_period_sec);
   }
 }
 
