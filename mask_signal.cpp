@@ -4,7 +4,6 @@
 #include <mutex>
 #include <condition_variable>
 #include <chrono>
-#include <map>
 #include <signal.h>
 #include <unistd.h>
 #include <string.h>
@@ -14,6 +13,14 @@ std::condition_variable cv;
 bool ready = false;
 bool processed = false;
 const static int sleep_period_sec = 5;
+
+void mask_signal(void)
+{
+  sigset_t mask;
+  sigemptyset(&mask); 
+  sigaddset(&mask, SIGRTMIN + 3); 
+  pthread_sigmask(SIG_BLOCK, &mask, NULL);
+}
 
 void signal_handler(int signo)
 { 
@@ -38,40 +45,31 @@ void set_signal_handler(void)
   }
 }
 
-void f_sleep()
+void f_signal_not_masked()
 {
   ready = true;
   cv.notify_one();
-    
+
   sleep(sleep_period_sec);
     
   processed = true;
   cv.notify_one();
 }
 
-void f_usleep()
+void f_signal_masked()
 {
+  mask_signal();
+
   ready = true;
   cv.notify_one();
-    
-  usleep(sleep_period_sec * 1000);
+
+  sleep(sleep_period_sec);
     
   processed = true;
   cv.notify_one();
 }
 
-void f_sleep_for()
-{
-  ready = true;
-  cv.notify_one();
-    
-  std::this_thread::sleep_for(std::chrono::seconds(sleep_period_sec));
-    
-  processed = true;
-  cv.notify_one();
-}
-
-void run(void(*threadFunction)(), const std::string& functionName)
+void run(void(*threadFunction)(), const bool isSignalMasked)
 {
   ready = false;
   processed = false;
@@ -95,20 +93,23 @@ void run(void(*threadFunction)(), const std::string& functionName)
   }
   auto end = std::chrono::system_clock::now();
 
-  std::cout << "Thread was going to sleep for " << sleep_period_sec << " seconds using " << functionName 
+  std::cout << "Thread was going to sleep for " << sleep_period_sec << " seconds using sleep"
             << " function, but tried to be interrupted by signal and executed for " << std::chrono::duration<double>(end-start).count()
-            << " seconds." << std::endl;
+            << " seconds. ";
+  if(isSignalMasked)
+  {
+    std::cout << "The signal was masked." << std::endl;
+  }
+  else
+  {
+    std::cout << "The signal wasn't masked." << std::endl;
+  }
 }
- 
+
 int main()
 {
-  const std::map<void(*)(), const std::string> functions {{&f_sleep, "sleep"},
-                                                          {&f_usleep, "usleep"},
-                                                          {&f_sleep_for, "sleep_for"}};
   set_signal_handler();
-  for(const auto& function : functions)
-  {
-    run(function.first, function.second);
-  }
+  run(&f_signal_not_masked, false);
+  run(&f_signal_masked, true);
   return 0;
 }
