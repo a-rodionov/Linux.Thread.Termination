@@ -6,6 +6,7 @@
 #include <chrono>
 #include <vector>
 #include <unistd.h>
+#include <cxxabi.h>
 
 std::mutex m;
 std::condition_variable cv;
@@ -32,20 +33,40 @@ static Object staticObject("Static Object");
 
 void ThreadFunction1_SecondStackFrame()
 {
-  Object localObject("Local Object. Thread 1. Second stack frame");
-
-  ready = true;
-  cv.notify_one();
-  while(true)
+  try
   {
-    sleep(1);
+    Object localObject("Local Object. Thread 1. Second stack frame");
+
+    ready = true;
+    cv.notify_one();
+    while(true)
+    {
+      sleep(1);
+    }
+  }
+  catch(...)
+  {
+    throw;
   }
 }
 
 void* ThreadFunction1(void*)
 {
-  Object localObject("Local Object. Thread 1. First stack frame");
-  ThreadFunction1_SecondStackFrame();
+  try
+  {
+    Object localObject("Local Object. Thread 1. First stack frame");
+    ThreadFunction1_SecondStackFrame();    
+  }
+  // NPTL generates exception of type abi::__forced_unwind for the thread for
+  // which pthread_cancel was called. If this exception is caught and not rethrown,
+  // it will lead to segfault. https://udrepper.livejournal.com/21541.html
+  catch (abi::__forced_unwind&)
+  {
+    throw;
+  }
+  catch(...)
+  {}
+  return nullptr;
 }
 
 void ThreadFunction2_NotInterruptible()
@@ -85,7 +106,8 @@ void ThreadFunction2_NotInterruptible()
 void* ThreadFunction2(void*)
 {
   Object localObject("Local Object. Thread 2. First stack frame");
-  ThreadFunction2_NotInterruptible();  
+  ThreadFunction2_NotInterruptible();
+  return nullptr;
 }
 
 int main()
